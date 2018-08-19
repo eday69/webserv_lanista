@@ -1,0 +1,15 @@
+{
+  "name": "webserv_lanista",
+  "version": "1.0.0",
+  "description": "Lanisya webservices",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Eric Day/Icaro Vazquez",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.16.3",
+    "mysql": "^2.16.0"
+  }
+}
