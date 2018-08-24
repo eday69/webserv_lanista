@@ -126,8 +126,8 @@ function postProfile(con, data, cb) {
   // First, check whether email is already registered
   // Yes, return error
   // No, return success (message that we sent email for confirmation)
-  data=JSON.parse(data);
-  var profile=JSON.parse(data.profile_data);
+  var profile=JSON.parse(data);
+//  var profile=JSON.parse(data.profile_data);
 
   var password=profile.password;
 
