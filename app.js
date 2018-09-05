@@ -1,6 +1,8 @@
 const express = require('express')
 const app = express()
 const crypto = require('crypto');
+'use strict';
+const nodemailer = require('nodemailer');
 
 /**
  * hash password with sha512.
@@ -43,258 +45,187 @@ if(!err) {
 }
 });
 
-function saveToken(con, data, cb) {
-  data=JSON.parse(data);
-  var token=JSON.parse(data.token_data);
 
-//  var token = data.token_data;
-//  console.log('Token is :'+JSON.stringify(token, null, 4));
-  var mediatable=Object.keys(token)[0];
-  var token_id=Object.values(token)[0];
-  var new_user="";
-  mediatable=mediatable.substring(0, mediatable.length - 3);
-  // First check if we already have this token in table
-  var query = con.query('SELECT user_profile_id FROM '+mediatable+'_account WHERE '+mediatable+'_id = ? ', [token_id],
-    function(err, results) {
-       if (err)
-           return cb(err, null);
-       // check to see if user is already in db
-       if (results.length == 0) {
-         // we don't have, so lets create an empty record for the user
-         // we need it, since we need the user_profile_id in order
-         // to insert our token in our social media table
-         var query2 = con.query('INSERT INTO user_profile (first_name) values("")',
-             function(err, results) {
-                if (err)
-                    return cb(err, null);
-                var new_user=results.insertId;
-                token.user_profile_id=new_user;
-                // now that we have the profile_id, we will insert into the
-                // respective socialmedia table, both the profile_id and the socialmedia id
-                var query3 = con.query('INSERT INTO '+mediatable+'_account SET ? ', [token],
-                    function(err, results) {
-                       if (err)
-                           return cb(err, null);
-                    }
-                  );
-              });
-        }
-        else {
-//          console.log("Our query produced: "+JSON.stringify(results, null, 4));
-          if (!(results === undefined || results.length == 0)) {
-              if ("user_profile_id" in results[0]) {
-                new_user = results[0].user_profile_id;
-              }
-          }
-        }
-//       console.log('3.'+query.sql);
-       return cb(null, new_user);
-    }
-  );
-}
 
-// ============================================================
-// Thoughts!
-// if we delete the token from the social media, when the user
-// logs back in, how will we 'know' him and be able to link his
-// profile to the social media login ?
-// Should we delete the tokens?
-
-function deleteToken(con, token, cb)
-{
-   console.log('Ready to DELETE');
-   console.log(JSON.stringify(token, null, 4));
-
-    var query = con.query('Delete books Where ? ', bookData,
-        function(err, results) {
-           if (err)
-               return cb(err, null);
-        });
-    console.log(query.sql);
-}
-
-// This is to update the users profile in the DB`
-// Receive
-//      profile_data= { email : email,
-//                      password: password
-//                    }
+// Access point POST http://host:3000/api/profile
+// Receive (two options)
+// 1)
+//      { social_media : token_id,
+//        social_media_token: social_media_token,
+//        last_name: last_name,
+//        first_name: first_name,
+//        email : email }
+// media_id can be "google_id", "facebook_id", "twitter_id", etc
+//
+// 2)   { email: email, password: password }
+// Returns
+//      {
+//        id : id,     (id for lanista app)
+//        user_account_status_id: user_account_status_id
+//      }
+//
 // Notes
-// post === insert
+//    If no profile exists for -new- user, then an empty one will be created
+//   by this call. (In order to generate the id)
 function postProfile(con, data, cb) {
-  console.log("Inserting new user");
-  // called when we login with email/pwd
-  // First, check whether email is already registered
-  // Yes, return error
-  // No, return success (message that we sent email for confirmation)
   var profile=JSON.parse(data);
-//  var profile=JSON.parse(data.profile_data);
-
-  var password=profile.password;
-
-  var salt = genRandomString(64); /** Gives us salt of length 64 */
-  var passwordData = sha512(password, salt);
-  profile.password = passwordData.passwordHash;
-  profile.password_salt = passwordData.salt;
-
-  var regreso = {id : "", msg : ""};
-  console.log("Profile: "+JSON.stringify(profile, null, 4));
-  var query = con.query('SELECT count(*) as existe FROM user_profile '+
-                        'WHERE email = ? ',
-                        [profile.email],
-       function(err, results) {
-          if (err) {
-             console.log(err);
-             return cb(err, null);
+  var regreso = {};
+  if ('social_media' in profile) {
+    var mediatable=profile.social_media;
+    var token_id=profile.social_media_token;
+    mediatable=mediatable.substring(0, mediatable.length - 3);
+    var query = con.query('SELECT user_profile_id FROM '+mediatable+'_account WHERE '+mediatable+'_id = ? ', [token_id],
+      function(err, results) {
+         var new_user='';
+         if (err) return cb(err, null);
+         // check to see if user is already in db
+         console.log(query.sql);
+         if (results.length == 0) {
+           // we don't have, so lets create an new profile record for the user
+           // we need it, since we need the user_profile_id in order
+           // to insert our token in our social media table
+           var query2 = con.query('INSERT INTO user_profile (first_name, last_name, '+
+                                  'email, user_account_status_id) VALUES(?,?,?,40)',
+                                  [profile.user_first_name,profile.user_last_name,profile.email],
+               function(err, results) {
+                  if (err)
+                      return cb(err, null);
+                  new_user=results.insertId;
+                  console.log('New id is : '+new_user);
+                  // now that we have the profile_id, we will insert into the
+                  // respective socialmedia table, both the profile_id and the socialmedia id
+                  var mSocialmedia = {};
+                  mSocialmedia[profile.social_media]=profile.social_media_token;
+                  mSocialmedia['user_profile_id']=new_user;
+                  var query3 = con.query('INSERT INTO '+mediatable+'_account SET ? ',
+                      [mSocialmedia],
+                      function(err, results) {
+                         if (err) {
+                             return cb(err, null);
+                         }
+                  });
+//                  console.log(query3.sql);
+                  // got lanista id for token, return it
+                  regreso.id=new_user;
+                  regreso.msg="";
+                  return cb(null, regreso);
+            });
           }
-          if (!(results === undefined || results.length == 0)) {
-             if ("existe" in results[0]) {
-               var existe = results[0].existe;
-             }
-             if (existe == 0) {  // Does not exist !
-               var query = con.query('INSERT into user_profile SET ?  ', [profile],
-                 function(err, results) {
-                    if (err) {
-                       console.log(err);
-                       return cb(err, null);
-                     }
-                     regreso.id=results.insertId;
-               });
-
-             }
-             else {
-               regreso.msg="email is use";
-             }
+          else {
+            if (!(results === undefined || results.length == 0)) {
+                if ("user_profile_id" in results[0]) {
+                  // Token already existed in db. This means Authorization
+                  // we have lanista id in db !
+                  // got lanista id for token, return it
+                  regreso.id=results[0].user_profile_id;
+                  regreso.msg="";
+                  return cb(null, regreso);
+                }
+            }
           }
-          return cb(null, regreso);
-       });
+      }
+    );
+
+// ok
+  }
+  else {  // Not a social media login, then an email login
+    var password=profile.password;
+    var salt = genRandomString(64); /** Gives us salt of length 64 */
+    var passwordData = sha512(password, salt);
+    profile.password = passwordData.passwordHash;
+    profile.password_salt = passwordData.salt;
+    profile.user_account_status_id = 20;
+
+    var query = con.query('SELECT count(*) as existe FROM user_profile '+
+                          'WHERE email = ? ',
+                          [profile.email],
+         function(err, results) {
+            if (err) {
+               return cb(err, null);
+            }
+            if (!(results === undefined || results.length == 0)) {
+               if ("existe" in results[0]) {
+                 var existe = results[0].existe;
+               }
+               if (existe == 0) {  // Does not exist !
+                 var query = con.query('INSERT into user_profile SET ?  ', [profile],
+                   function(err, results) {
+                      if (err) {
+                         return cb(err, null);
+                       }
+//                       console.log('Results id :'+results.insertId)
+                       regreso.id=results.insertId;
+                       regreso.msg="";
+                       return cb(null, regreso);
+                 });
+               }
+               else {
+                 regreso.id="";
+                 regreso.msg="email in use";
+                 return cb(null, regreso);
+               }
+            }
+         });
+
+  }
 }
 
 // This is to update the users profile in the DB`
 // Receive
-//      profile_data= { profile_id : profile_id,
-//                      first_name: first_name,
-//                      last_name: last_name,
-//                      user_email : email
+//                   {
+//                     first_name: first_name,
+//                     last_name: last_name,
+//                     user_role_id : role,
+//                     user_dob : user_date_of_birth
 //                    }
+// for :profile_id
+//
+// Return
+//            { user_account_status_id }
 // Notes
 // post === insert
 // put === update
 function putProfile(con, profile_id, data, cb) {
-  data=JSON.parse(data);
-  var profile=JSON.parse(data.profile_data);
+  var profile=JSON.parse(data);
+//  var profile=JSON.parse(data.profile_data);
 
   // First update user_profile table
   console.log("Profile: "+JSON.stringify(profile, null, 4));
-  var query = con.query('UPDATE user_profile SET first_name = ?, '+
-                        'last_name = ?, email = ? WHERE ? ',
-                        [profile.first_name, profile.last_name,
-                         profile.email, {id: profile.user_profile_id}],
+  var query = con.query('UPDATE user_profile SET ? WHERE ? ',
+                        [profile, {id: profile_id}],
        function(err, results) {
           if (err) {
              console.log(err);
              return cb(err, null);
-           }
-       });
-   // Now, if record does not exist in user account, create it !
-   // otherwise, update it
-//   console.log(query.sql);
-   var query = con.query('SELECT user_profile_id FROM user_account WHERE ?', {user_profile_id: profile.user_profile_id},
-     function(err, results) {
-        if (err) {
-           console.log(err);
-           return cb(err, null);
-        }
-        if (!(results === undefined || results.length == 0)) {
-            if ("user_profile_id" in results[0]) {
-              // exists, so update
-              var query = con.query('UPDATE user_account '+
-                                    'SET email = ? '+
-                                    'WHERE ? ',
-                                    [profile.email, {user_profile_id: profile.user_profile_id}],
-                   function(err, results) {
-                      if (err) {
-                         console.log(err);
-                         return cb(err, null);
-                       }
-
-                   });
-            }
           }
-            else {
-              // no exists, on insert
-              var query = con.query('INSERT into user_account SET user_profile_id = ?, '+
-                                    'email = ?  ', [profile.user_profile_id, profile.email],
-                function(err, results) {
-                   if (err) {
-                      console.log(err);
-                      return cb(err, null);
-                    }
-
-              });
-            }
-      });
-
-  return cb(null, null);
-}
-
-// This is to update the user profile password in the DB`
-// Receive
-//      profile_data= { password : password
-//                    }
-// Notes
-//
-//   Will add fields {password_salt: salt} and
-//   replace the password by user with hashed password
-//
-function saveProfilePwd(con, profile_id, data, cb) {
-  data=JSON.parse(data);
-  var profile=JSON.parse(data.profile_data);
-  console.log("Profile: "+JSON.stringify(profile, null, 4));
-
-  // First we need to protect user password
-  // We will generate a random salt to apply to
-  // users password.
-  // Once we've hashed password, we will add the field
-  // of salt (we need it to check password in future)
-  // and we will change users password for the hashed version
-
-  var password=profile.password;
-
-  var salt = genRandomString(64); /** Gives us salt of length 16 */
-  var passwordData = sha512(password, salt);
-  profile.password = passwordData.passwordHash;
-  profile.password_salt = passwordData.salt;
-
-  // We are ready, continue.
-  // First update user_profile table
-  console.log("Profile: "+JSON.stringify(profile, null, 4));
-  var query = con.query('UPDATE user_account '+
-                        'SET ? '+
-                        'WHERE ? ',
-                        [profile, {user_profile_id: profile_id}],
-       function(err, results) {
-          if (err) {
-             console.log(err);
-             return cb(err, null);
-           }
-
+          // We've update fields in user profile table.
+          // Should probably check if info is complete, then
+          // update user_account_status_id to 100 (if complete)
+          // otherwise we could return a different status
+          // What is complete? (Name, email, role, dob?)
+          //
+          var query = con.query('SELECT user_account_status_id '+
+                                'FROM user_profile WHERE ?  ',
+                                [{id: profile_id}],
+            function(err, results) {
+               if (err) {
+                  console.log(err);
+                  return cb(err, null);
+                }
+                return cb(null, {user_account_status_id: results[0].user_account_status_id});
+          });
+//          console.log(query.sql);
        });
-  console.log(query.sql);
-
-  return cb(null, null);
 }
 
 
 function getProfile(con, profile_id, cb) {
   // Get profile info form both tables
-  var query = con.query('SELECT up.first_name, up.last_name, up.full_name, up.email, '+
-                                'up.accept_terms_of_service, up.time_zone, ua.user_name, '+
-                                'ua.email, ua.password, ua.password_salt, ua.password_reminder_token, '+
-                                'ua.password_reminder_expire, ua.email_confirmation_token, '+
-                                'ua.user_account_status_id '+
-                        'FROM  user_profile up, user_account ua '+
-                        'WHERE up.id = ua.user_profile_id '+
-                        '  AND up.id = ? '
+  var query = con.query('SELECT first_name, last_name, full_name, email, '+
+                               'accept_terms_of_service, time_zone, '+
+                               'user_account_status_id, user_role_id, user_dob '+
+                        'FROM   user_profile  '+
+                        'WHERE id = ? '
                         , [profile_id],
         function(err, results) {
            if (err) {
@@ -303,6 +234,85 @@ function getProfile(con, profile_id, cb) {
            }
             return cb(null, results[0]);
         });
+}
+
+// Login process. We validate email & password credentials
+// against data in db
+// Receive
+//      { email : email,
+//        password: password }
+// Return
+//      { id: id,
+//        user_account_status_id: user_account_status_id}
+// Notes
+function validateLogin(con, user, cb) {
+  console.log("Getting user");
+  var user=JSON.parse(user);
+//  var profile=JSON.parse(data.profile_data);
+
+  var password=user.password;
+
+  var return_info = {};
+  var query = con.query('SELECT id, password, password_salt, '+
+                        'first_name, last_name, user_account_status_id '+
+                        'FROM user_profile '+
+                        'WHERE email = ?  ', [user.email],
+    function(err, results) {
+       if (err) {
+          console.log(err);
+          return cb(err, null);
+        }
+        if (!((results === undefined) || (results.length == 0))) {
+           if ("id" in results[0]) {
+             var password_db = results[0].password;
+             var password_salt = results[0].password_salt;
+
+             return_info.id = results[0].id;
+//             return_info.first_name = results[0].first_name;
+//             return_info.last_name = results[0].last_name;
+             return_info.user_account_status_id = results[0].user_account_status_id;
+
+             var passwordData = sha512(password, password_salt);
+//             console.log(passwordData, password,
+//               password_db, password_salt);
+//             console.log(query.sql);
+
+             if (password_db == passwordData.passwordHash) {
+               // correct credentials
+               return cb(null, return_info);
+             }
+             else {
+               // credentials are wrong
+               return cb(null, {id: null, msg: "Wrong credentials !"});
+             }
+
+           }
+         }
+         else {
+           // user not found
+           return cb(null, {id: null, msg: "User not found !"});
+         }
+       });
+}
+
+// API Get Roles
+// Return
+//      { id: id,
+//        roles: roles }
+// Notes
+function getRoles(con, cb) {
+//  console.log("Getting roles");
+  var query = con.query('SELECT id, role '+
+                        'FROM user_roles ', [],
+    function(err, results) {
+       if (err) {
+          return cb(err, null);
+        }
+//        console.log(query.sql);
+//        console.log(results);
+
+        return cb(null, results);
+    });
 }
 
 /*
@@ -414,81 +424,8 @@ router.use(function(req, res, next) {
 // for: token/:token
 
 
-router.route('/token')
-    // Access point POST http://host:3000/api/token
-    // Receive
-    //      token_data= { media_id : token_id }
-    // media_id can be "google_id", "facebook_id", "twitter_id", etc
-    //
-    // Return
-    //      id   (id for lanista app)
-    //
-    // Notes
-    //    If no profile exists for -new- user, then an empty one will be created
-    //   by this call. (In order to generate the id)
-
-    .post(function(req, res) {
-
-        console.log('Data from /token/POST is :'+JSON.stringify(req.body, null, 4));
-        var token = JSON.stringify(req.body);
-
-        saveToken(connection, token, function(err, id) {
-              if (err) {
-                res.status(err).jsonp({error: "Error !! Error !!"});
-                return console.error(err);
-              }
-              if (id != "") {
-                // Found? send 200 + profile id information.
-                console.log('Yup, generated id : '+id);
-                res.status(200).jsonp(id);
-              }
-              else {
-                // Not found? send 404 back to client
-                console.log('Nope, no id ??!!: ');
-                res.status(404).end();
-              }
-        });
-
-    });
 
 
-router.route('/token/:token')
-
-    // get token ?? make sense? if you know the token, why get it?
-    // get token GET http://host:8080/api/token/:token_id)
-    .get(function(req, res) {
-        getToken(connection, req.params.token, function(err, bookinfo) {
-              if (err) {
-                res.status(err).jsonp({error: "Error !! Error !!"});
-                return console.error(err);
-              }
-              if (bookinfo != "") {
-                // Found? send 200 + book information.
-                console.log('Yup, found it: ' +req.params.isbn);
-                console.log('-->' +bookinfo+'<--');
-                res.status(200).jsonp(bookinfo);
-              }
-              else {
-                // Not found? send 404 back to client
-                console.log('Nope, not found: ' +req.params.isbn);
-                res.status(404).end();
-              }
-        });
-    })
-
-    // delete token DELETE http://host:8080/api/token/:token_id)
-    .delete(function(req, res) {
-      deleteToken(connection, req.params.token, function(err, tokeninfo) {
-            if (err) {
-              res.status(err).jsonp({error: "Error !! Error !!"});
-              return console.error(err);
-            }
-            if (tokeninfo == "") {
-              console.log('Deleted !!!  ' +req.params.token);
-              res.status(200).end();
-            }
-      });
-    });
 
 router.route('/profile/:profile_id')
 
@@ -506,7 +443,7 @@ router.route('/profile/:profile_id')
       //
       // Notes
 
-        console.log('Data from /profile/POST is :'+JSON.stringify(req.body, null, 4));
+        console.log('Data from /profile/PUT is :'+JSON.stringify(req.body, null, 4));
         var info = JSON.stringify(req.body);
 
         putProfile(connection, req.params.profile_id, info, function(err, id) {
@@ -587,6 +524,9 @@ router.route('/profile/:profile_id')
 router.route('/profile')
 
     .post(function(req, res) {
+      // Post of profile is to create a lanista id when user decides to login
+      // either using his email/pwd combo or a social media token.
+      //
       // Access point POST http://host:3000/api/profile/
       // Receive
       //                    }
@@ -598,15 +538,15 @@ router.route('/profile')
         console.log('Data from /profile/POST is :'+JSON.stringify(req.body, null, 4));
         var info = JSON.stringify(req.body);
 
-        postProfile(connection, info, function(err, id) {
+        postProfile(connection, info, function(err, regreso) {
               if (err) {
                 res.status(err).jsonp({error: "Error !! Error !!"});
                 return console.error(err);
               }
-              if (id != "") {
+              if (regreso != "") {
                 // Found? send 200 +  information.
-                console.log('Yup, updated profile id : '+id);
-                res.status(200).jsonp(id);
+//                console.log('Result from POST is :'+JSON.stringify(regreso, null, 4));
+                res.status(200).jsonp(regreso);
               }
               else {
                 // Not found? send 404 back to client
@@ -616,6 +556,70 @@ router.route('/profile')
         });
 
     });
+  router.route('/validateLogin')
+
+      .post(function(req, res) {
+        // Access point POST http://host:3000/api/login/
+        // Receive { email: email, password: password }
+        //
+        // Return { id : id,
+        //          first_name : first_name,
+        //          last_name : last_name,
+        //          full_name : full_name,
+        //          user_account_status_id : user_account_status_id }
+        //
+        // Notes
+
+          console.log('Data from /validateLogin/POST is :'+JSON.stringify(req.body, null, 4));
+          var info = JSON.stringify(req.body);
+
+          validateLogin(connection, info, function(err, regreso) {
+                if (err) {
+                  res.status(err).jsonp({error: "Error !! Error !!"});
+                  return console.error(err);
+                }
+                if (regreso.id != null) {
+                  // Found? send 200 +  information.
+//                    console.log('Result from POST is :'+JSON.stringify(regreso, null, 4));
+                  res.status(200).jsonp(regreso);
+                }
+                else {
+                  // Not found? send 404 back to client
+                  res.status(203).jsonp(regreso);
+                }
+          });
+
+      });
+      router.route('/roles')
+
+          .get(function(req, res) {
+            // Access point GET http://host:3000/api/roles/
+            // Return { id : id,
+            //          role : role }
+            //
+            // Notes
+
+              console.log('Data from /login/GET is :'+JSON.stringify(req.body, null, 4));
+              var info = JSON.stringify(req.body);
+
+              getRoles(connection, function(err, regreso) {
+
+/*
+              connection.query("SELECT * FROM user_roles ", [], function (error, results, fields) {
+                  if (error) throw error;
+                  return res.send({ results });
+              });
+*/
+
+                    if (err) {
+                      res.status(err).jsonp({error: "Error !! Error !!"});
+                      return console.error(err);
+                    }
+                    res.status(200).jsonp(regreso);
+              });
+
+          });
+
 // test route to make sure everything is working (accessed at GET http://localhost:8080/api)
 router.get('/', function(req, res) {
 //      fs.readFile(__dirname + '/public/index.html', 'utf8', function(err, text){
@@ -630,6 +634,39 @@ router.get('/', function(req, res) {
 // all of our routes will be prefixed with /api
 app.use('/api', router);
 app.use(express.static(__dirname + '/public'));
+
+/*
+console.log('Sending message');
+
+let transporter = nodemailer.createTransport({
+    host: 'aspmx.l.google.com',
+    port: 587,
+    auth: {
+        user: 'eric.ch.day@gmail.com',
+        pass: 'eday1969'
+    },
+    tls: {
+        // do not fail on invalid certs
+        rejectUnauthorized: false
+    }
+});
+
+let mailOptions = {
+      from: 'eric.ch.day@gmail.com',
+      to: 'eric.ch.day@gmail.com',
+      subject: 'Message test`',
+      text: 'I hope this message gets delivered!',
+      html: '<b>Hello world?</b>' // html body
+   };
+
+transporter.sendMail(mailOptions, (err, info) => {
+  if (err) {
+      return console.log(err);
+  }
+  console.log('Message sent: %s', info.messageId);
+});
+
+*/
 
 
 // START THE SERVER
